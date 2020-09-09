@@ -32,70 +32,104 @@ ggplot(data = imdb.train, mapping = aes(x = gross, y = imdb_score)) +
   geom_point()
 with(imdb.train, cor(gross, imdb_score, use = "complete.obs"))
 
-
-## Tasks
-## Convert data to US dollars
-
-## Analyze my Columns
-my.col <- imdb.train[, 13:16]
-names(my.col)
-head(my.col)
-
-## Note that there are quite a few outliers here. 
-# ggplot(data = imdb, mapping = aes(y = num_voted_users))+
-#   geom_boxplot()
-# ggplot(data = imdb, mapping = aes(y = cast_total_facebook_likes))+
-#   geom_boxplot()
-ggplot(data = imdb.train, mapping = aes(y = facenumber_in_poster))+
-  geom_boxplot()
-
-## Note both are skewed right
-# ggplot(data = imdb.train, mapping = aes(x = num_voted_users))+
-#   geom_histogram()
-# ggplot(data = imdb.train, mapping = aes(x = cast_total_facebook_likes))+
-#   geom_histogram()
-# ggplot(data = imdb.train, mapping = aes(x = facenumber_in_poster))+
-#   geom_histogram()
-
-## How many Na's are there in all of the columns
-is.na(my.col) %>% apply(2, sum)
-## Not many Na's... probably because the first two columns are counts
-## so it makes sense that if nobody liked them there is just a 0
-## The second two columns do have NA's but there are relatively few 
-## compared to the dataset. The first NA's column is a categorical 
-## variable so there is no adjusting for that. The second is a number
-## for the number of people on the movie poster. There are 10 NA's which
-## likely means there is no movie poster. One possible solution could be
-## to fill those in with 0's because there technically were no faces on
-## the poster.
-
-head(imdb.train[, 17:28])
-names(imdb.train[, 17:28])
-
-imdb.train[which(is.na(my.col[, 3:4])),]$country
-
-imdb.train %>% filter(is.na(facenumber_in_poster)) %>% 
-  select(movie_title)
-
 ############## In class Cloumns ############
-new.col <- imdb.train[, c("genres", "plot_keywords")]
+imdb.train[, c("genres", "plot_keywords")] %>% is.na() %>% apply(2, sum)
 
-is.na(new.col) %>% apply(2, sum)
+
 
 ##### KEYWORDS
-imdb$plot_keywords %>% sapply(function(x){unlist(str_split(x, "\\|"))})
 
-words <- imdb$plot_keywords %>% sapply(function(x){unlist(str_split(x, "[\\| ]"))}) %>% 
-  unlist() %>% unname() %>% table() %>%  sort(decreasing = TRUE)
+keywords <- imdb$plot_keywords %>% sapply(function(x){unlist(str_split(x, "[\\| ]"))}) %>% 
+  unlist() %>% unname() %>%  sort(decreasing = TRUE)
 
 #list out words and frequency
-stopwords::stopwords("english")
+useless <- stopwords::stopwords("english")
 
-which()
+positions <- c()
+for(i in 1:length(keywords)){
+  positions[i] <- keywords[i] %in% useless
+}
 
-##### Genres
-imdb$genres %>% sapply(function(x){unlist(str_split(x, "[\\| ]"))}) %>% 
-  unlist() %>% unname() %>% table() %>%  sort(decreasing = TRUE) 
+meaningful <- keywords[-which(positions==1)]
+meaningful.freq <- meaningful %>% table() %>%  sort(decreasing = TRUE) %>% data.frame()
+
+keywords.list <- imdb$plot_keywords %>% sapply(function(x){unlist(str_split(x, "[\\| ]"))})
+  
+score.list <- lapply(keywords.list, function(x){
+  points <- 0
+  x <- unique(x)
+  for(i in 1:length(x)){
+    if(x[i] %in% meaningful.freq[, 1]){
+      points <- points + meaningful.freq[which(meaningful.freq[, 1] == x[i]), 2]
+    }
+  }
+  points / 5
+})
+
+scores <- score.list %>% unlist() %>% unname()
+
+# this way of looking at it yields skewed results even
+# with a log transformation
+#if not doing a transformation... replace NA's with 0
+is.na(scores)  %>% which()
+hist(scores)
+boxplot(scores)
+
+#if doing a log transform... replace NA's with 0.01
+scores <- ifelse(scores < 1, 1, scores)
+hist(log(scores))
+boxplot(log(scores))
+
+# this is the best transforation that I could find
+# to normalize the scores.
+cube.scores <- scores^(1/3)
+hist(cube.scores)
+boxplot(cube.scores)
+median(cube.scores)
+mean(cube.scores)
+
+# another way of looking at it is to give it a score
+# from 1 - 10 that is based on according to it's percentile 
+digit.score <- as.numeric(cut_number(scores, n = 10))
+
+
+keywords.adjust <- data.frame(imdb$imdb_score, imdb$movie_title, scores, cube.scores, digit.score)
+keywords.adjust.narm <- keywords.adjust[-which(is.na(keywords.adjust$imdb.imdb_score)), ]
+
+# there really is no correlation so this may have just been 
+# a waste of time
+cor(keywords.adjust.narm$imdb.imdb_score, keywords.adjust.narm$scores)
+
+
+################################################################
+############################# Genres ###########################
+################################################################
+
+# We can do the same thing with the genre scores... but there is 
+# similarly no correlation.
+
+genre.freq <- imdb$genres %>% sapply(function(x){unlist(str_split(x, "[\\| ]"))}) %>% 
+  unlist() %>% unname() %>% table() %>%  sort(decreasing = TRUE) %>% data.frame()
+
+genre.list <- imdb$genres %>% sapply(function(x){unlist(str_split(x, "[\\| ]"))})
+
+genre.score.list <- lapply(genre.list, function(x){
+  points <- 0
+  for(i in 1:length(x)){
+    if(x[i] %in% genre.freq[, 1]){
+      points <- points + genre.freq[which(genre.freq[, 1] == x[i]), 2]
+    }
+  }
+  points / length(x)
+})
+
+scores.genre <- genre.score.list %>% unlist() %>% unname()
+
+genre.adjust <- data.frame(imdb$imdb_score, imdb$movie_title, scores.genre)
+genre.adjust.narm <- genre.adjust[-which(is.na(genre.adjust$imdb.imdb_score)), ]
+
+cor(genre.adjust.narm$imdb.imdb_score, genre.adjust.narm$scores)
+
 
 imdb$genres %>% sapply(function(x){unlist(str_split(x, "[\\| ]"))}) %>% 
    qdapTools::mtabulate()
