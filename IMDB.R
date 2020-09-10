@@ -2,134 +2,180 @@
 ## This is all my code to analyze the IMDB database
 ##
 
-## Libraries I need
+## Libraries I Need
 library(tidyverse)
-library(ggplot2)
+library(DataExplorer)
 
 ## Read in the data
-imdb.test <- read_csv("IMDBTest.csv")
-imdb.train <- read_csv("IMDBTrain.csv")
+imdb.train <- read_csv("./IMDBTrain.csv")
+imdb.test <- read_csv("./IMDBTest.csv")
 
-## Merge the two datasets together so when I clean the 
-## training dataset I also treat teh test set the same way
-names(imdb.test)[names(imdb.test) == "ID"] <- "movie_title"
-imdb <- bind_rows(train = imdb.train, test = imdb.test, .id = "Set")
+## Merge the two datasets together so when I clean the
+## training dataset I also treat the test set the same way
+names(imdb.test)[names(imdb.test)=="Id"] <- "movie_title"
+imdb <- bind_rows(train=imdb.train, test=imdb.test, .id="Set")
 
-##
-## Exploratory Data Analysis
-##
+####################################
+## Some Exploratory Data Analysis ##
+####################################
+
+## Overall summary of the data
+summary(imdb)
+
+## Which variables have missing values?
+plot_missing(imdb)
+
+## Which variables are related to each other?
+plot_correlation(imdb, type="continuous", 
+                 cor_args=list(use="pairwise.complete.obs"))
 
 ## Scatterplot of Budget vs. Score
-ggplot(data = imdb, mapping = aes(x = budget, y = imdb_score)) +
+## Budget is in local currency, need to convert to common currency
+ggplot(data=imdb, mapping=aes(x=budget, y=imdb_score)) +
   geom_point()
-imdb.train %>% filter(budget > 100000000, country == "USA") %>% 
+imdb %>% filter(budget>100000000, country=="USA") %>% 
   select(movie_title)
 
-## Missing Values (what do you do?)
-# Delete, Fill (Mean, Median, Regression), or Ignore
-## Scatterplot of groww vs imdb
-ggplot(data = imdb.train, mapping = aes(x = gross, y = imdb_score)) +
+## Scatterplot of gross vs imdb
+ggplot(data=imdb, mapping=aes(x=gross, y=imdb_score)) +
   geom_point()
-with(imdb.train, cor(gross, imdb_score, use = "complete.obs"))
+with(imdb, cor(gross, imdb_score, use="complete.obs"))
 
-############## In class Cloumns ############
-imdb.train[, c("genres", "plot_keywords")] %>% is.na() %>% apply(2, sum)
+###########################################
+## Go through and clean up the variables ##
+###########################################
 
+## Duration - only one missing so just look it up
+## and fill it in
+# imdb[is.na(imdb$duration),]$duration <- 116 #or
+imdb <- imdb %>%
+  mutate(duration=replace(duration, is.na(duration), 116))
 
+## Color - mode imputation and convert to 0/1
+#imdb$color[is.na(imdb$color)] <- "Color"
+imdb <- imdb %>% 
+  mutate(color=replace(color, is.na(color), "Color"))
+imdb <- imdb %>%
+  mutate(color = ifelse(color == "Color", 1, 0))
 
-##### KEYWORDS
+## num_user_for_reviews = mean imputation
+imdb <- imdb %>%
+  mutate(num_user_for_reviews=replace(num_user_for_reviews, is.na(num_user_for_reviews), 
+                                      mean(num_user_for_reviews, na.rm=TRUE)))
 
-keywords <- imdb$plot_keywords %>% sapply(function(x){unlist(str_split(x, "[\\| ]"))}) %>% 
-  unlist() %>% unname() %>%  sort(decreasing = TRUE)
+## Director - convert to number of movies made by director
+director_movie_count <- imdb %>%
+  group_by(director_name) %>%
+  summarise(movies_made = n())
 
-#list out words and frequency
-useless <- stopwords::stopwords("english")
+imdb <- imdb %>%
+  left_join(director_movie_count) %>%
+  select(-director_name)
 
-positions <- c()
-for(i in 1:length(keywords)){
-  positions[i] <- keywords[i] %in% useless
-}
+## Median imputation for num_critic_for_reviews
+# imdb[is.na(imdb[["num_critic_for_reviews"]]), "num_critic_for_reviews"] <-
+#   median(x = imdb[["num_critic_for_reviews"]], na.rm = TRUE)
+imdb <- imdb %>% 
+  mutate(num_critic_for_reviews=replace(num_critic_for_reviews,
+                                        is.na(num_critic_for_reviews),
+                                        median(num_critic_for_reviews, na.rm=TRUE)))
 
-meaningful <- keywords[-which(positions==1)]
-meaningful.freq <- meaningful %>% table() %>%  sort(decreasing = TRUE) %>% data.frame()
+## Language - only five missing values so we replace them
+missing_languages <- c("English", "None", "None", "None", "None")
+#imdb$language[is.na(imdb$language)] <- missing_languages  ## or
+imdb <- imdb %>% 
+  mutate(language=replace(language, is.na(language), missing_languages))
 
-keywords.list <- imdb$plot_keywords %>% sapply(function(x){unlist(str_split(x, "[\\| ]"))})
-  
-score.list <- lapply(keywords.list, function(x){
-  points <- 0
-  x <- unique(x)
-  for(i in 1:length(x)){
-    if(x[i] %in% meaningful.freq[, 1]){
-      points <- points + meaningful.freq[which(meaningful.freq[, 1] == x[i]), 2]
-    }
-  }
-  points / 5
-})
+## Content-rating - collapse GP --> PG and create "other"
+## X --> NC-17, TV-?? --> TV, M-->PG13
+imdb <- imdb %>%
+  mutate(content_rating=fct_explicit_na(content_rating, na_level = "Unknown")) %>%
+  mutate(content_rating=fct_collapse(content_rating, PG=c("GP", "PG"),
+                                     NC17=c("X", "NC-17"),
+                                     TV=c("TV-14", "TV-G", "TV-PG"),
+                                     PG13=c("PG-13","M")))
+table(imdb$content_rating)
 
-scores <- score.list %>% unlist() %>% unname()
+## Genres - get the main genre and number of genres assigned
+imdb <- imdb %>% mutate(main_genre=(str_split(genres, "\\|") %>%
+                                      sapply(., FUN=function(x){x[1]})),
+                        num_genre=(str_split(genres, "\\|") %>%
+                                     sapply(., FUN=length)))
+table(imdb$main_genre) 
 
-# this way of looking at it yields skewed results even
-# with a log transformation
-#if not doing a transformation... replace NA's with 0
-is.na(scores)  %>% which()
-hist(scores)
-boxplot(scores)
+#Some genres only have 1 movie so create "other" category
+#that contains all categories with less than 10 movies
+other.cat <- imdb %>% group_by(main_genre) %>% 
+  summarize(n=n()) %>% filter(n<10) %>% pull(main_genre)
+imdb <- imdb %>%
+  mutate(main_genre=fct_collapse(main_genre, Other=other.cat))
 
-#if doing a log transform... replace NA's with 0.01
-scores <- ifelse(scores < 1, 1, scores)
-hist(log(scores))
-boxplot(log(scores))
+# There is a somewhat strong correlation between budget and gross, so we will
+# impute the budget first since budget has fewer missing values and then use the
+# imputed the budget to predict the gross
 
-# this is the best transforation that I could find
-# to normalize the scores.
-cube.scores <- scores^(1/3)
-hist(cube.scores)
-boxplot(cube.scores)
-median(cube.scores)
-mean(cube.scores)
+## LM for Budget using only full data
+budget.lm <- lm(sqrt(budget)~num_critic_for_reviews+duration+num_voted_users+
+                  cast_total_facebook_likes+title_year+
+                  movie_facebook_likes+main_genre, data=imdb)
+budget.preds <- (predict(budget.lm, newdata=(imdb %>% filter(is.na(budget)))))^2
+imdb <- imdb %>%
+  mutate(budget=replace(budget, is.na(budget), budget.preds))
 
-# another way of looking at it is to give it a score
-# from 1 - 10 that is based on according to it's percentile 
-digit.score <- as.numeric(cut_number(scores, n = 10))
+## Stochastic reg imputation for gross
+gross.lm <- lm(sqrt(gross)~num_critic_for_reviews+duration+num_voted_users+
+                 cast_total_facebook_likes+title_year+
+                 movie_facebook_likes+main_genre+budget, data=imdb)
+gross.preds <- (predict(gross.lm, newdata=(imdb %>% filter(is.na(gross))))+
+                  rnorm(sum(is.na(imdb$gross)), 0, sigma(gross.lm)))^2
+imdb <- imdb %>%
+  mutate(gross=replace(gross, is.na(gross), gross.preds))
+rm(list=c("gross.lm", "budget.lm"))
 
+## actor_name columns - we created num_top_actors which tell us 
+## how many “top” actors were in a movie. “Top” actors were actors who 
+## were in multiple movies. All 3 actor column were used to decide who was a top actor.
+all.actors <- imdb %>% select(actor_1_name, actor_2_name, actor_3_name) %>% do.call(c, args=.)
+actors.freq <- data.frame(actor=all.actors) %>% filter(!is.na(actor)) %>%
+  group_by(actor) %>% summarize(n=n()) %>%
+  arrange(desc(n))
+top.actors <- actors.freq %>% filter(n>10) %>% pull(actor)
+imdb <- imdb %>%
+  mutate(num_top_actors=(ifelse(actor_1_name%in%top.actors, 1, 0) +
+                           ifelse(actor_2_name%in%top.actors, 1, 0) +
+                           ifelse(actor_3_name%in%top.actors, 1, 0)))
 
-keywords.adjust <- data.frame(imdb$imdb_score, imdb$movie_title, scores, cube.scores, digit.score)
-keywords.adjust.narm <- keywords.adjust[-which(is.na(keywords.adjust$imdb.imdb_score)), ]
+## facebook_like columns -  we made a column num_pop_actors for the total number of popular actors 
+## in a movie based off of their Facebook likes. With this, we decided to throw 
+## out cast_facebook likes as it seemed repetitive. It’s pretty mute since there’s 
+## also actor Facebook likes
+actor.likes <- imdb %>% select(actor_1_facebook_likes, actor_2_facebook_likes, actor_3_facebook_likes) %>%
+  do.call(c, args=.)
+actors.likes <- data.frame(actor=all.actors, likes=actor.likes) %>%
+  filter(!is.na(actor)) %>% group_by(actor) %>% summarize(likes=max(likes)) %>%
+  arrange(desc(likes))
+pop.actors <- actors.likes %>% filter(likes>quantile(likes, probs=0.99)) %>%
+  pull(actor)
+imdb <- imdb %>%
+  mutate(num_pop_actors=(ifelse(actor_1_name%in%pop.actors, 1, 0) +
+                           ifelse(actor_2_name%in%pop.actors, 1, 0) +
+                           ifelse(actor_3_name%in%pop.actors, 1, 0)))
 
-# there really is no correlation so this may have just been 
-# a waste of time
-cor(keywords.adjust.narm$imdb.imdb_score, keywords.adjust.narm$scores)
+## movie_facebook_likes - we believe it to be unreliable. 
+## It seems that some of the movies with 0s in the data have more 
+## likes than top movies in real life. Although, there are no NAs 
+## so not much cleaning to do there. We were considering throwing it out
 
+## I am going to throw out any variable we didn't use/clean
+imdb <- imdb %>% select(-cast_total_facebook_likes, -movie_imdb_link, -facenumber_in_poster,
+                        -plot_keywords, -country, -movie_facebook_likes, -director_facebook_likes,
+                        -actor_1_name, -actor_2_name, -actor_3_name, -actor_1_facebook_likes,
+                        -actor_2_facebook_likes, -actor_3_facebook_likes, -genres, 
+                        -cast_total_facebook_likes)
+plot_missing(imdb)
 
-################################################################
-############################# Genres ###########################
-################################################################
+####################################
+## Write out cleaned up IMDB Data ##
+####################################
 
-# We can do the same thing with the genre scores... but there is 
-# similarly no correlation.
-
-genre.freq <- imdb$genres %>% sapply(function(x){unlist(str_split(x, "[\\| ]"))}) %>% 
-  unlist() %>% unname() %>% table() %>%  sort(decreasing = TRUE) %>% data.frame()
-
-genre.list <- imdb$genres %>% sapply(function(x){unlist(str_split(x, "[\\| ]"))})
-
-genre.score.list <- lapply(genre.list, function(x){
-  points <- 0
-  for(i in 1:length(x)){
-    if(x[i] %in% genre.freq[, 1]){
-      points <- points + genre.freq[which(genre.freq[, 1] == x[i]), 2]
-    }
-  }
-  points / length(x)
-})
-
-scores.genre <- genre.score.list %>% unlist() %>% unname()
-
-genre.adjust <- data.frame(imdb$imdb_score, imdb$movie_title, scores.genre)
-genre.adjust.narm <- genre.adjust[-which(is.na(genre.adjust$imdb.imdb_score)), ]
-
-cor(genre.adjust.narm$imdb.imdb_score, genre.adjust.narm$scores)
-
-
-imdb$genres %>% sapply(function(x){unlist(str_split(x, "[\\| ]"))}) %>% 
-   qdapTools::mtabulate()
+write_csv(x=imdb, path="./CleanedIMDBData.csv")
