@@ -79,7 +79,7 @@ elnet.preds <- data.frame(Id=imdb.test$movie_title, Predicted=predict(elnet, new
 write_csv(x=elnet.preds, path="./ElasticNetPredictionsHeaton.csv")
 
 
-## Fit an Bayesian Neural Network
+## Fit an MARS
 library(earth)
 
 earth.grid <- expand.grid(nprune=seq(20, 30, length=30),
