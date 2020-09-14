@@ -79,9 +79,22 @@ elnet.preds <- data.frame(Id=imdb.test$movie_title, Predicted=predict(elnet, new
 write_csv(x=elnet.preds, path="./ElasticNetPredictionsHeaton.csv")
 
 
+## Fit an Bayesian Neural Network
+library(earth)
 
+earth.grid <- expand.grid(nprune=seq(20, 30, length=30),
+                          degree=seq(.9, 1.5, length=10))
 
-
+adapt <- train(form=imdb_score~.,
+               data=(imdb.train %>% select(-Set, -movie_title)),
+               method="earth",
+               trControl=trainControl(method="repeatedcv",
+                                      number=10, #Number of pieces of your data
+                                      repeats=3), #repeats=1 = "cv"
+               tuneGrid=earth.grid
+)
+plot(adapt)
+summary(adapt)
 
 
 
