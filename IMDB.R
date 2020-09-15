@@ -78,23 +78,24 @@ plot(elnet)
 elnet.preds <- data.frame(Id=imdb.test$movie_title, Predicted=predict(elnet, newdata=imdb.test))
 write_csv(x=elnet.preds, path="./ElasticNetPredictionsHeaton.csv")
 
+## Gradient Boosting... Boosted Generalized Additive Model
+library(bst)
+library(plyr)
 
-## Fit an MARS
-library(earth)
+boost.grid <- expand.grid(mstop=seq(21, 40, length=20),
+                          nu=seq(0.6, 1.5, length=10))
 
-earth.grid <- expand.grid(nprune=seq(20, 30, length=30),
-                          degree=seq(.9, 1.5, length=10))
-
-adapt <- train(form=imdb_score~.,
+boost <- train(form=imdb_score~.,
                data=(imdb.train %>% select(-Set, -movie_title)),
-               method="earth",
+               method="BstLm",
                trControl=trainControl(method="repeatedcv",
                                       number=10, #Number of pieces of your data
                                       repeats=3), #repeats=1 = "cv"
-               tuneGrid=earth.grid
+               tuneGrid=boost.grid
 )
-plot(adapt)
-summary(adapt)
+plot(boost)
+boost
 
-
+boost.preds <- data.frame(Id=imdb.test$movie_title, Predicted=predict(boost, newdata=imdb.test))
+write_csv(x=boost.preds, path="./BoostPredictionsBenAnderson.csv")
 
